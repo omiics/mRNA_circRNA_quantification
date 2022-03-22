@@ -12,3 +12,6 @@ Programs available in the PATH:
 * STAR
 * samtools
 * featureCounts
+* bwa
+* bowtie
+* perl
