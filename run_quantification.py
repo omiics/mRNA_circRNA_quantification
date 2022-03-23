@@ -2,7 +2,7 @@ import argparse
 import sys
 import os
 import warnings
-from pathlib import Path
+from pathlib2 import Path
 from plumbum.cmd import STAR, samtools, featureCounts, perl, bwa, bowtie2
 from plumbum.cmd import python2, grep, gzip
 
@@ -12,23 +12,23 @@ def star_mapping(fq1, fq2, bam_prefix, genomeDir, annotation, threads=1):
     
     STAR['--runThreadN', threads, '--genomeDir', genomeDir, 
          '--sjdbGTFfile', annotation, '--sjdbOverhang', 79,
-         '--readFilesIn', fq1, fq2, '--readFileCommand', 'zcat',
+         '--readFilesIn', fq1, fq2, '--readFilesCommand', 'zcat',
          '--outSAMtype', 'BAM', 'SortedByCoordinate',
-         '--outFileNamePrefix', bam_prefix].run()
+         '--outFileNamePrefix', bam_prefix+"."].run()
 
     samtools['index', bam_file].run()
 
     return bam_file
 
 
-def featureCounts(bamfile, output_prefix, annotation, threads=1):
+def run_featureCounts(bamfile, output_prefix, annotation, threads=1):
     
     output_files = []
 
     for i in range(0,2):
         output_files.append("{}.s{}_overlap".format(output_prefix, i))
         featureCounts['-T', threads, '-p', '-C', '-O', '-s', i,
-                      '-o', output_files[-1], bamfile]
+                      '-a', annotation, '-o', output_files[-1], bamfile].run()
 
     return output_files
 
@@ -83,10 +83,12 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     sites_reads = "{}.sample.sites.reads".format(output_prefix)
     
     bowtie_call = bowtie2['-p', threads, '--reorder', '--mm', '-M20', 
-                          '--scores-min=C,-15,0', '-x', BowtieIndex, 
+                          '--score-min=C,-15,0', '-q', '-x', BowtieIndex, 
                           '-U', anchors] | python2[os.path.join(scripts_path, "find_circ", "find_circ_v2.py"),
                                                    '-G', chromoDir, '-p', output_prefix, 
-                                                   '-s', log_sites] > sites_bed >= sites_reads
+                                                   '-s', log_sites]
+    bowtie_call = bowtie_call > sites_bed
+    bowtie_call = bowtie_call >= sites_reads
     bowtie_call.run()
     
     circ_candidates = "{}.circ_candidates.bed".format(output_prefix)
@@ -158,24 +160,31 @@ class ArgumentCaller():
         # Check the script-path
         self.check_script_path(args.script_path)
         
-        # Check all of the software is available
+        # Check the annotation
+        self.check_annotation(args.mRNA_annotation)
+        
+        # Check the Chromosome-dir
+        self.check_chromosome_dir(args.Chromosome_dir)
+        
+        # Check the reference fasta
+        self.check_reference_fasta(args.reference_fasta)
 
         print("Running STAR mapping")
         bam_file = star_mapping(args.fastq1, args.fastq2, args.output_prefix, 
-                                genomeDir=args.STARindex, annotation=args.mRNA_annotations, threads=args.threads)
+                                genomeDir=args.STARindex, annotation=args.mRNA_annotation, threads=args.threads)
 
         print("Running featureCounts")
-        feature_count_files = featureCounts(bam_file, args.output_prefix,
-                                            annotation=args.mRNA_annotations, threads=args.threads)
+        feature_count_files = run_featureCounts(bam_file, args.output_prefix,
+                                            annotation=args.mRNA_annotation, threads=args.threads)
         
         print("Running CIRI2")
-        output_circRNA = CIRI2(args.fastq1, args.fastq2, args.output_prefix, args.scripts_path,
-                               annotation=args.mRNA_annotations, reference_fasta=args.reference_fasta,
+        output_circRNA = CIRI2(args.fastq1, args.fastq2, args.output_prefix, args.script_path,
+                               annotation=args.mRNA_annotation, reference_fasta=args.reference_fasta,
                                BWAIndex=args.BWAindex, threads=args.threads)
         
         print("Running find_circ")
         circ_candidates, circ_candidates_35x2 = find_circ(args.fastq1, args.fastq2, 
-                                                          args.output_prefix, args.scripts_path,
+                                                          args.output_prefix, args.script_path,
                                                           BowtieIndex=args.Bowtie2Index, chromoDir=args.Chromosome_dir,
                                                           threads=args.threads)
         
@@ -206,7 +215,7 @@ class ArgumentCaller():
             if not os.path.exists(dirname):
                 raise Exception("Path to output_prefix {} does not exist. If it should please add the --create-path option".format(dirname))
     
-    def check_STARindex(STARindex):
+    def check_STARindex(self, STARindex):
         
         if STARindex is None:
             print("No STARindex has been provided. Please provide a directory with STARindex to be mapped against.")
@@ -227,7 +236,7 @@ class ArgumentCaller():
                 print("It is missing the following essential file: {}".format(filename))
                 
     
-    def check_BWAindex(BWAindex):
+    def check_BWAindex(self, BWAindex):
         
         if BWAindex is None:
             print("No BWAindex has been provided. Please provide a prefix to BWAindex without the extensions.")
@@ -254,7 +263,7 @@ class ArgumentCaller():
                 print("It is missing the following essential file: {}".format(BWAindex+extension))
                 sys.exit(1)
     
-    def check_Bowtie2Index(Bowtie2Index):
+    def check_Bowtie2Index(self, Bowtie2Index):
         
         if Bowtie2Index is None:
             print("No Bowtie2Index has been provided. Please provide a prefix to Bowtie2Index without the extensions.")
@@ -301,7 +310,40 @@ class ArgumentCaller():
                     raise("Script {} does not exist in {}/find_circ!".format(filename, script_path))
         else:
             raise("find_circ does not exist in the Script-path {}".format(script_path))
-    
+        
+    def check_annotation(self, annotation_file):
+        
+        if annotation_file is None:
+            print("No mRNA annotation file has been provided. Please provide a gtf file.")
+            print("Use --mRNA-annotation or -a to provide a gtf file with annotations")
+            sys.exit(1)
+            
+        if not os.path.exists(annotation_file):
+            raise("mRNA annotation file {} does not exist!".format(annotation_file))
+        
+    def check_chromosome_dir(self, chromosome_dir):
+        
+        if chromosome_dir is None:
+            print("No chromosome dir has been provided please provide a directory with all of the chromosomes in individual fasta files.")
+            print("Use --Chromosome-dir to provide such a directory.")
+            sys.exit(1)
+            
+        if not os.path.exists(chromosome_dir):
+            raise("Provided chromosome dir {} does not exist!".format(chromosome_dir))
+        
+        if not os.path.isdir(chromosome_dir):
+            raise("Provided chromosome dir {} is not a directory".format(chromosome_dir))
+        
+    def check_reference_fasta(self, reference_fasta):
+        
+        if reference_fasta is None:
+            print("No reference fasta file has been provided!")
+            print("Use --reference-fasta or -r to provide a reference fasta file")
+            sys.exit(1)
+        
+        if not os.path.exists(reference_fasta):
+            raise("Provided reference fasta file {} does not exist!".format(reference_fasta))
+        
 
 if __name__=="__main__":
     ArgumentCaller()
