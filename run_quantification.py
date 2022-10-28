@@ -78,17 +78,16 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     
     print("\tRunning the final bowtie")
     
+    bowtie_log = "{}.bt2_finalpass.log".format(output_prefix)
     log_sites = "{}.sites.log".format(output_prefix)
     sites_bed = "{}.sample.sites.bed".format(output_prefix)
     sites_reads = "{}.sample.sites.reads".format(output_prefix)
     
-    bowtie_call = bowtie2['-p', threads, '--reorder', '--mm', '-M20', 
+    bowtie_call = (bowtie2['-p', threads, '--reorder', '--mm', '-M20', 
                           '--score-min=C,-15,0', '-q', '-x', BowtieIndex, 
-                          '-U', anchors] | python2[os.path.join(scripts_path, "find_circ", "find_circ_v2.py"),
+                          '-U', anchors] >= bowtie_log) | (python2[os.path.join(scripts_path, "find_circ", "find_circ_v2.py"),
                                                    '-G', chromoDir, '-p', output_prefix, 
-                                                   '-s', log_sites]
-    bowtie_call = bowtie_call > sites_bed
-    bowtie_call = bowtie_call >= sites_reads
+                                                   '-s', log_sites] >= sites_reads) > sites_bed
     bowtie_call.run()
     
     circ_candidates = "{}.circ_candidates.bed".format(output_prefix)
@@ -104,6 +103,8 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     threshold_call = threshold_call | python2[os.path.join(scripts_path, "find_circ", "scorethresh.py"), '-21', 10000]
     threshold_call = threshold_call > circ_candidates
     
+    threshold_call.run()
+    
     circ_candidates_35x2 = "{}.circ_candidates_map35x2.bed".format(output_prefix)
     
     print("\t Applying thresholds")
@@ -118,12 +119,14 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     threshold_call = threshold_call | python2[os.path.join(scripts_path, "find_circ", "scorethresh.py"), '-21', 10000]
     threshold_call = threshold_call > circ_candidates_35x2
     
+    threshold_call.run()
+    
     return circ_candidates, circ_candidates_35x2
     
     
 class ArgumentCaller():
     
-    __version__ = "1.0.0"
+    __version__ = "1.1.0"
 
     def __init__(self):
         print("mRNA and circRNA quantification (v{})".format(self.__version__))
@@ -131,6 +134,7 @@ class ArgumentCaller():
             usage = "python run_quantification.py [<args>] <fastq1> <fastq2>"
         )
 
+        parser.add_argument("run_mode", choices=["full", "STAR", "circRNA", "CIRI2", "find_circ"], help="Choose which pipelines should be run.")
         parser.add_argument("fastq1", help="First gzip fastq file from paired end sequencing")
         parser.add_argument("fastq2", help="Second gzip fastq file from paired end sequencing")
         parser.add_argument("--output-prefix", '-o', default="./output", help="Output prefix path default is current directory and output: './output'")
@@ -152,58 +156,71 @@ class ArgumentCaller():
         # Check that the path to the output_prefix exists
         self.check_output_prefix(args.output_prefix, args.create_path)
         # Check that the STARindex provided is a directory and contains the standard filenames
-        self.check_STARindex(args.STARindex)
+        if args.run_mode in ["full", "STAR"]:
+            self.check_STARindex(args.STARindex)
         # Check that the BWAindex follows the standard naming convention
-        self.check_BWAindex(args.BWAindex)
+        if args.run_mode in ["full", "circRNA", "CIRI2"]:
+            self.check_BWAindex(args.BWAindex)
         # Check that the Bowtie2Index follows the standard naming convention
-        self.check_Bowtie2Index(args.Bowtie2Index)
+        if args.run_mode in ["full", "circRNA", "find_circ"]:
+            self.check_Bowtie2Index(args.Bowtie2Index)
         # Check the script-path
         self.check_script_path(args.script_path)
         
         # Check the annotation
-        self.check_annotation(args.mRNA_annotation)
+        if args.run_mode in ["full", "STAR", "circRNA", "CIRI2"]:
+            self.check_annotation(args.mRNA_annotation)
         
         # Check the Chromosome-dir
-        self.check_chromosome_dir(args.Chromosome_dir)
+        if args.run_mode in ["full", "circRNA", "find_circ"]:
+            self.check_chromosome_dir(args.Chromosome_dir)
         
         # Check the reference fasta
-        self.check_reference_fasta(args.reference_fasta)
+        if args.run_mode in ["full", "circRNA", "CIRI2"]:
+            self.check_reference_fasta(args.reference_fasta)
 
-        print("Running STAR mapping")
-        bam_file = star_mapping(args.fastq1, args.fastq2, args.output_prefix, 
-                                genomeDir=args.STARindex, annotation=args.mRNA_annotation, threads=args.threads)
+        if args.run_mode in ["full", "STAR"]:
+            print("Running STAR mapping")
+            bam_file = star_mapping(args.fastq1, args.fastq2, args.output_prefix, 
+                                    genomeDir=args.STARindex, annotation=args.mRNA_annotation, threads=args.threads)
 
-        print("Running featureCounts")
-        feature_count_files = run_featureCounts(bam_file, args.output_prefix,
-                                            annotation=args.mRNA_annotation, threads=args.threads)
+        if args.run_mode in ["full", "STAR"]:
+            print("Running featureCounts")
+            feature_count_files = run_featureCounts(bam_file, args.output_prefix,
+                                                annotation=args.mRNA_annotation, threads=args.threads)
         
-        print("Running CIRI2")
-        output_circRNA = CIRI2(args.fastq1, args.fastq2, args.output_prefix, args.script_path,
-                               annotation=args.mRNA_annotation, reference_fasta=args.reference_fasta,
-                               BWAIndex=args.BWAindex, threads=args.threads)
+        if args.run_mode in ["full", "circRNA", "CIRI2"]:
+            print("Running CIRI2")
+            output_circRNA = CIRI2(args.fastq1, args.fastq2, args.output_prefix, args.script_path,
+                                   annotation=args.mRNA_annotation, reference_fasta=args.reference_fasta,
+                                   BWAIndex=args.BWAindex, threads=args.threads)
         
-        print("Running find_circ")
-        circ_candidates, circ_candidates_35x2 = find_circ(args.fastq1, args.fastq2, 
-                                                          args.output_prefix, args.script_path,
-                                                          BowtieIndex=args.Bowtie2Index, chromoDir=args.Chromosome_dir,
-                                                          threads=args.threads)
+        if args.run_mode in ["full", "circRNA", "find_circ"]:
+            print("Running find_circ")
+            circ_candidates, circ_candidates_35x2 = find_circ(args.fastq1, args.fastq2, 
+                                                             args.output_prefix, args.script_path,
+                                                             BowtieIndex=args.Bowtie2Index, chromoDir=args.Chromosome_dir,
+                                                             threads=args.threads)
         
         # Print the location all of the output files
         print("Finished")
         
-        print("Output featureCounts:")
-        for fc_file in feature_count_files:
-            print("\t{}".format(fc_file))
+        if args.run_mode in ["full", "STAR"]:
+            print("Output featureCounts:")
+            for fc_file in feature_count_files:
+                print("\t{}".format(fc_file))
         
-        print("Output CIRI2 circRNA: {}".format(output_circRNA))
+        if args.run_mode in ["full", "circRNA", "CIRI2"]:
+            print("Output CIRI2 circRNA: {}".format(output_circRNA))
         
-        print("Output from find_circ:")
-        print("\t{}".format(circ_candidates))
-        print("\t{}".format(circ_candidates_35x2))
+        if args.run_mode in ["full", "circRNA", "find_circ"]:
+            print("Output from find_circ:")
+            print("\t{}".format(circ_candidates))
+            print("\t{}".format(circ_candidates_35x2))
         
     def check_fastq(self, fastq):
-        if not fastq.endswith(".fq.gz"):
-            warnings.warn("Provided fastq file {} does not seem to get with .fq.gz, is this a gzip fastq file?".format(fastq))
+        if not (fastq.endswith(".fq.gz") or fastq.endswith(".fastq.gz")):
+            raise Exception("Provided fastq file {} does not seem to get with .fq.gz or .fastqc, is this a gzip fastq file?".format(fastq))
             
     def check_output_prefix(self, output_prefix, create_path=False):
         
@@ -223,10 +240,10 @@ class ArgumentCaller():
             sys.exit(1)
         
         if not os.path.exists(STARindex):
-            raise("Provided STARindex {} does not exists!".format(STARindex))
+            raise Exception("Provided STARindex {} does not exists!".format(STARindex))
             
         if not os.path.isdir(STARindex):
-            raise("Provided STARindex {} is not a directory!".format(STARindex))
+            raise Exception("Provided STARindex {} is not a directory!".format(STARindex))
         
         # Check if specific files exist in the directory
         files = ["Genome", "SA", "SAindex"]
@@ -245,7 +262,7 @@ class ArgumentCaller():
         
         if os.path.exists(BWAindex):
             if os.path.isdir(BWAindex):
-                raise("Provided BWAindex {} is a directory! Please provide a prefix to the ".format(BWAindex))
+                raise Exception("Provided BWAindex {} is a directory! Please provide a prefix to the ".format(BWAindex))
             # Does it end with one of the extensions
             extensions = [".amb", ".ann", ".bwt", ".fa", ".pac", ".sa"]
             for extension in extensions:
@@ -253,7 +270,7 @@ class ArgumentCaller():
                     print("Looks like you provided one of the files in BWAindex {}".format(BWAindex))
                     print("Please only provide the prefix to the index files: {}".format(BWAindex[:-len(extension)]))
                     sys.exit(1)
-            raise("Provided a file {} that exists and does not look like it belongs in a BWAindex".format(BWAindex))
+            raise Exception("Provided a file {} that exists and does not look like it belongs in a BWAindex".format(BWAindex))
         
         # Check if specific files exist in the directory
         extensions = [".bwt", ".sa", ".amb"]
@@ -272,7 +289,7 @@ class ArgumentCaller():
         
         if os.path.exists(Bowtie2Index):
             if os.path.isdir(Bowtie2Index):
-                raise("Provided Bowtie2Index {} is a directory! Please provide a prefix to the ".format(BWAindex))
+                raise Exception("Provided Bowtie2Index {} is a directory! Please provide a prefix to the ".format(BWAindex))
             # Does it end with one of the extensions
             extensions = [".fa", ".1.bt2", ".2.bt2", ".3.bt2", ".4.bt2", ".rev.1.bt2", ".rev.1.bt2"]
             for extension in extensions:
@@ -280,7 +297,7 @@ class ArgumentCaller():
                     print("Looks like you provided one of the files in Bowtie2Index {}".format(Bowtie2Index))
                     print("Please only provide the prefix to the index files: {}".format(Bowtie2Index[:-len(extension)]))
                     sys.exit(1)
-            raise("Provided a file {} that exists but does not look like it belongs in a Bowtie2Index".format(Bowtie2Index))
+            raise Exception("Provided a file {} that exists but does not look like it belongs in a Bowtie2Index".format(Bowtie2Index))
         
         # Check if specific files exist in the directory
         extensions = [".1.bt2", ".rev.1.bt2"]

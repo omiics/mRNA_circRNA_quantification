@@ -63,12 +63,14 @@ optional arguments:
 
 ## Example on how to run it
 
+### FULL
+
 The script only runs with sample at a time, where it needs specified all of the different index files, and annotations for running the processes. To speed up the run you can use -t or --threads to provide a number of threads that the external programs should use.
 
---create-path can be used to automatically make the path provided in the output-prefix to create data devided into subdirectories.
+--create-path can be used to automatically make the path provided in the output-prefix to create data divided into subdirectories.
 
 ```
-python2 run_quantification.py test_sample_1.fq.gz test_sample_2.fq.gz \
+python2 run_quantification.py full test_sample_1.fq.gz test_sample_2.fq.gz \
     -o output/test_sample -s path/to/scripts \ 
     --star path/to/STARIndex \
     --bwa path/to/BWAIndex/GRCh37.p13.genome \
@@ -78,3 +80,5 @@ python2 run_quantification.py test_sample_1.fq.gz test_sample_2.fq.gz \
     -r /mnt/storage/genomes/human/GRCh37.p13.genome.fa \
     --create-path -t 10
 ```
+
+### 
