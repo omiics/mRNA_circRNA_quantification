@@ -126,7 +126,7 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     
 class ArgumentCaller():
     
-    __version__ = "1.1.0"
+    __version__ = "2.0.0"
 
     def __init__(self):
         print("mRNA and circRNA quantification (v{})".format(self.__version__))
@@ -165,7 +165,8 @@ class ArgumentCaller():
         if args.run_mode in ["full", "circRNA", "find_circ"]:
             self.check_Bowtie2Index(args.Bowtie2Index)
         # Check the script-path
-        self.check_script_path(args.script_path)
+        if args.run_mode in ["full", "circRNA", "CIRI2", "find_circ"]:
+            self.check_script_path(args.script_path)
         
         # Check the annotation
         if args.run_mode in ["full", "STAR", "circRNA", "CIRI2"]:
@@ -220,7 +221,9 @@ class ArgumentCaller():
         
     def check_fastq(self, fastq):
         if not (fastq.endswith(".fq.gz") or fastq.endswith(".fastq.gz")):
-            raise Exception("Provided fastq file {} does not seem to get with .fq.gz or .fastqc, is this a gzip fastq file?".format(fastq))
+            raise Exception("Provided fastq file '{}' does not endwith .fq.gz or .fastq.gz, is this a gzip fastq file?".format(fastq))
+        if not os.path.exists(fastq):
+            raise Exception("Provided fastq file '{}' does not exist!".format(fastq))
             
     def check_output_prefix(self, output_prefix, create_path=False):
         
