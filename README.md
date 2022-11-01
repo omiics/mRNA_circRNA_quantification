@@ -46,7 +46,7 @@ pip install argparse
 ## Help message
 
 ```
-mRNA and circRNA quantification (v2.0.0)
+mRNA and circRNA quantification (v2.1.0)
 usage: python run_quantification.py [<args>] <fastq1> <fastq2>
 
 positional arguments:
@@ -78,6 +78,8 @@ optional arguments:
   --threads THREADS, -t THREADS
                         How many threads should be used in all of the external
                         programs
+  --keep-temp           Specify that temporary files should be kept.
+
 ```
 
 ## Examples on how to run it

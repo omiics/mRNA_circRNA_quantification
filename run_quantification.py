@@ -33,7 +33,7 @@ def run_featureCounts(bamfile, output_prefix, annotation, threads=1):
     return output_files
 
 
-def CIRI2(fq1, fq2, output_prefix, scripts_path, annotation, reference_fasta, BWAIndex, threads=1):
+def CIRI2(fq1, fq2, output_prefix, scripts_path, annotation, reference_fasta, BWAIndex, keep_temp, threads=1):
     
     bwa_sam = "{}_ciri2_temp.sam".format(output_prefix)
     
@@ -49,10 +49,14 @@ def CIRI2(fq1, fq2, output_prefix, scripts_path, annotation, reference_fasta, BW
     perl[os.path.join(scripts_path, "CIRI2.pl"), '-I', bwa_sam, '-O', output_circRNA,
          '-F', reference_fasta, '-A', annotation, '-G', log_file].run()
     
+    if not keep_temp:
+        # Delete temp files
+        os.remove(bwa_sam)
+    
     return output_circRNA
     
 
-def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, threads=1):
+def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, keep_temp, threads=1):
     
     temp_bam = "{}.mapped.bam".format(output_prefix)
     log_file = "{}.bt2_firstpass.log".format(output_prefix)
@@ -70,11 +74,19 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     
     (samtools['view', '-hf', 4, temp_bam] | samtools['view', '-Sb', '-'] > unmapped_bam).run()
     
+    if not keep_temp:
+        # Delete temp file
+        os.remove(temp_bam)
+    
     print("\tProducing anchors")
     
     anchors = "{}.anchors.fq.gz".format(output_prefix)
     
     (python2[os.path.join(scripts_path, "find_circ", "unmapped2anchors.py"), unmapped_bam] | gzip > anchors).run()
+    
+    if not keep_temp:
+        # Delete temp file
+        os.remove(unmapped_bam)
     
     print("\tRunning the final bowtie")
     
@@ -89,6 +101,10 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
                                                    '-G', chromoDir, '-p', output_prefix, 
                                                    '-s', log_sites] >= sites_reads) > sites_bed
     bowtie_call.run()
+    
+    if not keep_temp:
+        # Delete temp file
+        os.remove(anchors)
     
     circ_candidates = "{}.circ_candidates.bed".format(output_prefix)
     
@@ -126,7 +142,7 @@ def find_circ(fq1, fq2, output_prefix, scripts_path, BowtieIndex, chromoDir, thr
     
 class ArgumentCaller():
     
-    __version__ = "2.0.0"
+    __version__ = "2.1.0"
 
     def __init__(self):
         print("mRNA and circRNA quantification (v{})".format(self.__version__))
@@ -147,6 +163,7 @@ class ArgumentCaller():
         parser.add_argument("--script-path", '-s', default="~/mRNA_circRNA_quantification", help="Path to where the scripts are installed")
         parser.add_argument("--create-path", action="store_true", help="Should the output prefix path be automatically created")
         parser.add_argument("--threads", '-t', default=1, type=int, help="How many threads should be used in all of the external programs")
+        parser.add_argument("--keep-temp", action="store_true", help="Specify that temporary files should be kept.")
 
         args = parser.parse_args(sys.argv[1:])
 
@@ -194,13 +211,14 @@ class ArgumentCaller():
             print("Running CIRI2")
             output_circRNA = CIRI2(args.fastq1, args.fastq2, args.output_prefix, args.script_path,
                                    annotation=args.mRNA_annotation, reference_fasta=args.reference_fasta,
-                                   BWAIndex=args.BWAindex, threads=args.threads)
+                                   BWAIndex=args.BWAindex, keep_temp=args.keep_temp, threads=args.threads)
         
         if args.run_mode in ["full", "circRNA", "find_circ"]:
             print("Running find_circ")
             circ_candidates, circ_candidates_35x2 = find_circ(args.fastq1, args.fastq2, 
                                                              args.output_prefix, args.script_path,
                                                              BowtieIndex=args.Bowtie2Index, chromoDir=args.Chromosome_dir,
+                                                             keep_temp=args.keep_temp,
                                                              threads=args.threads)
         
         # Print the location all of the output files
@@ -345,14 +363,17 @@ class ArgumentCaller():
         
         if chromosome_dir is None:
             print("No chromosome dir has been provided please provide a directory with all of the chromosomes in individual fasta files.")
+            print("Or provide a reference fasta file")
             print("Use --Chromosome-dir to provide such a directory.")
             sys.exit(1)
             
         if not os.path.exists(chromosome_dir):
             raise("Provided chromosome dir {} does not exist!".format(chromosome_dir))
         
-        if not os.path.isdir(chromosome_dir):
-            raise("Provided chromosome dir {} is not a directory".format(chromosome_dir))
+        if not (chromosome_dir.endswith(".fasta") or chromosome_dir.endswith(".fa")):
+            # Check if it is a directory
+            if not os.path.isdir(chromosome_dir):
+                raise("Provided chromosome dir {} is not a directory".format(chromosome_dir))
         
     def check_reference_fasta(self, reference_fasta):
         
